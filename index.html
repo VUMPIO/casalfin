@@ -471,29 +471,66 @@ const SUPABASE_ANON_KEY='sb_publishable_DuaaMlcB4PNarjbEQykZWw_45CR6wdU';
 let _sb=null, _dbFirstSyncResolve=null;
 const _dbFirstSync=new Promise(res=>{_dbFirstSyncResolve=res;});
 
+// Busca tudo de novo e devolve true se algo mudou. O tempo real cobre o app
+// aberto; isto cobre a volta do segundo plano, quando o celular já derrubou a
+// conexão e nenhum evento chegaria.
+async function pullAll(){
+  if(!_sb)return false;
+  try{
+    const{data,error}=await _sb.from('casalfin_state').select('key,value');
+    if(error||!data)return false;
+    let mudou=false;
+    const vistos=new Set();
+    data.forEach(row=>{
+      vistos.add(row.key);
+      const v=JSON.stringify(row.value);
+      if(localStorage.getItem(row.key)!==v){localStorage.setItem(row.key,v);mudou=true;}
+    });
+    // Chaves apagadas no servidor enquanto o app estava fora do ar. O padrão
+    // cobre só o que sincroniza (mês, metas, nomes) — configurações locais
+    // como cf_wa_bot_url não podem ser removidas aqui.
+    const SINCRONIZADA=/^cf_(\d{4}-\d{2}_|g_|m_)/;
+    Object.keys(localStorage).filter(k=>SINCRONIZADA.test(k)).forEach(k=>{
+      if(!vistos.has(k)){localStorage.removeItem(k);mudou=true;}
+    });
+    return mudou;
+  }catch(e){return false;}
+}
+
+async function refreshFromServer(){
+  if(await pullAll()){initState();renderAll();}
+}
+
+function subscribeRealtime(){
+  _sb.channel('casalfin_state_changes')
+    .on('postgres_changes',{event:'*',schema:'public',table:'casalfin_state'},payload=>{
+      const key=(payload.new&&payload.new.key)||(payload.old&&payload.old.key);
+      if(!key)return;
+      if(payload.eventType==='DELETE'){
+        if(localStorage.getItem(key)!==null){localStorage.removeItem(key);initState();renderAll();}
+      }else{
+        const v=JSON.stringify(payload.new.value);
+        if(localStorage.getItem(key)!==v){localStorage.setItem(key,v);initState();renderAll();}
+      }
+    })
+    .subscribe();
+}
+
 async function initDb(){
   try{
     if(!window.supabase||SUPABASE_URL.startsWith('REPLACE_ME')){_dbFirstSyncResolve();return;}
     _sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
-    const{data,error}=await _sb.from('casalfin_state').select('key,value');
-    if(!error&&data){
-      data.forEach(row=>{
-        const v=JSON.stringify(row.value);
-        if(localStorage.getItem(row.key)!==v)localStorage.setItem(row.key,v);
-      });
-    }
-    _sb.channel('casalfin_state_changes')
-      .on('postgres_changes',{event:'*',schema:'public',table:'casalfin_state'},payload=>{
-        const key=(payload.new&&payload.new.key)||(payload.old&&payload.old.key);
-        if(!key)return;
-        if(payload.eventType==='DELETE'){
-          if(localStorage.getItem(key)!==null){localStorage.removeItem(key);initState();renderAll();}
-        }else{
-          const v=JSON.stringify(payload.new.value);
-          if(localStorage.getItem(key)!==v){localStorage.setItem(key,v);initState();renderAll();}
-        }
-      })
-      .subscribe();
+    await pullAll();
+    subscribeRealtime();
+
+    document.addEventListener('visibilitychange',()=>{
+      if(document.visibilityState!=='visible')return;
+      // A conexão em tempo real morre em segundo plano no celular: refaz as duas.
+      try{_sb.removeAllChannels();}catch(e){}
+      subscribeRealtime();
+      refreshFromServer();
+    });
+    window.addEventListener('online',refreshFromServer);
   }catch(e){_sb=null;}
   _dbFirstSyncResolve();
 }

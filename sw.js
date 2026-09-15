@@ -1,4 +1,4 @@
-const CACHE = 'casalfin-v1';
+const CACHE = 'casalfin-v2';
 
 const SHELL = [
   './',
