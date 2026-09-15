@@ -10,9 +10,8 @@ const {
   jidNormalizedUser,
 } = require('@whiskeysockets/baileys');
 
-const { parseExpense, detectIntent } = require('./parser');
-const { getPersonNames, addExpense, addCasalExpense, getMonthlyTotals } = require('./supabase');
-const { fmtBRL } = require('./format');
+const { getPersonNames } = require('./supabase');
+const { think } = require('./brain');
 
 const OWNER_PERSON_INDEX = Number(process.env.OWNER_PERSON_INDEX ?? 0);
 const HTTP_PORT = Number(process.env.WHATSAPP_BOT_PORT ?? 8787);
@@ -165,61 +164,15 @@ async function startBot() {
 
 async function handleExpenseMessage(sock, jid, text) {
   const personNames = await getPersonNames();
-
-  const intent = detectIntent(text, personNames);
-  if (intent) {
-    await sock.sendMessage(jid, { text: await answerIntent(intent, personNames) });
-    return;
-  }
-
-  const parsed = parseExpense(text, personNames, OWNER_PERSON_INDEX);
-
-  if (!parsed.ok) {
+  try {
+    const reply = await think(text, personNames, OWNER_PERSON_INDEX);
+    await sock.sendMessage(jid, { text: reply });
+  } catch (err) {
+    console.error('Erro no brain:', err);
     await sock.sendMessage(jid, {
-      text: '⚠️ Não consegui encontrar um valor nessa mensagem. Exemplo: "Ifood 45,90 nubank"',
+      text: '⚠️ Deu erro aqui do meu lado processando sua mensagem. Tenta de novo?',
     });
-    return;
   }
-
-  const entry = {
-    nome: parsed.nome,
-    data: parsed.data,
-    tipo: parsed.tipo,
-    cat: parsed.cat,
-    valor: parsed.valor,
-  };
-
-  const quemLabel = parsed.quem === 'casal' ? 'Casal' : personNames[parsed.quem];
-  if (parsed.quem === 'casal') await addCasalExpense(entry);
-  else await addExpense(parsed.quem, entry);
-
-  await sock.sendMessage(jid, {
-    text: `✅ ${parsed.catLabel} · R$ ${parsed.valor} ${parsed.tipo ? '· ' + parsed.tipo + ' ' : ''}· ${quemLabel}\n"${parsed.nome}" registrado no CasalFin.`,
-  });
-}
-
-async function answerIntent(intent, personNames) {
-  const totals = await getMonthlyTotals();
-
-  if (intent.type === 'total_self') {
-    const v = totals[`p${OWNER_PERSON_INDEX}`];
-    return `💰 Você já gastou ${fmtBRL(v)} esse mês.`;
-  }
-  if (intent.type === 'total_person') {
-    const v = totals[`p${intent.person}`];
-    return `💰 ${personNames[intent.person]} já gastou ${fmtBRL(v)} esse mês.`;
-  }
-  if (intent.type === 'total_couple') {
-    return `💰 Vocês gastaram ${fmtBRL(totals.grandTotal)} esse mês (${personNames[0]}: ${fmtBRL(totals.p0)}, ${personNames[1]}: ${fmtBRL(totals.p1)}, Casal: ${fmtBRL(totals.couple)}).`;
-  }
-  if (intent.type === 'compare') {
-    if (totals.p0 === totals.p1) return `⚖️ ${personNames[0]} e ${personNames[1]} gastaram exatamente o mesmo esse mês: ${fmtBRL(totals.p0)}.`;
-    const winner = totals.p0 > totals.p1 ? 0 : 1;
-    const loser = winner === 0 ? 1 : 0;
-    const diff = Math.abs(totals.p0 - totals.p1);
-    return `🏆 ${personNames[winner]} gastou mais esse mês: ${fmtBRL(totals[`p${winner}`])} contra ${fmtBRL(totals[`p${loser}`])} de ${personNames[loser]} (diferença de ${fmtBRL(diff)}).`;
-  }
-  return '🤔 Não entendi a pergunta.';
 }
 
 startBridgeServer();

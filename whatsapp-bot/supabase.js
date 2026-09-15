@@ -58,14 +58,7 @@ const sumBy = (arr, pred) => (arr || []).filter(pred).reduce((s, r) => s + pv(r.
 // Espelha exatamente a fórmula usada no dashboard do app (renderDashboard):
 // gasto de uma pessoa = variáveis dela + fixos pagos atribuídos a ela + parcelas dela.
 // Gasto "casal" (resp=2) fica de fora do total individual, igual no app.
-async function getMonthlyTotals() {
-  const mk = monthKey();
-  const [p0, p1, fixos, parc] = await Promise.all([
-    getValue(`cf_${mk}_p0`),
-    getValue(`cf_${mk}_p1`),
-    getValue(`cf_${mk}_fixos`),
-    getValue(`cf_${mk}_parc`),
-  ]);
+function computeTotals({ p0, p1, fixos, parc }) {
   const totalFor = idx =>
     sumBy(idx === 0 ? p0 : p1, () => true) +
     sumBy(fixos, r => (r.resp ?? 2) === idx && r.pago) +
@@ -78,12 +71,32 @@ async function getMonthlyTotals() {
   return { p0: p0Total, p1: p1Total, couple, grandTotal: p0Total + p1Total + couple };
 }
 
+// Retrato completo do mês — é o que o brain.js entrega pro Claude como contexto.
+async function getMonthSnapshot() {
+  const mk = monthKey();
+  const [p0, p1, fixos, parc, entradas] = await Promise.all([
+    getValue(`cf_${mk}_p0`),
+    getValue(`cf_${mk}_p1`),
+    getValue(`cf_${mk}_fixos`),
+    getValue(`cf_${mk}_parc`),
+    getValue(`cf_${mk}_entradas`),
+  ]);
+  const data = {
+    p0: p0 || [],
+    p1: p1 || [],
+    fixos: fixos || [],
+    parc: parc || [],
+    entradas: entradas || [],
+  };
+  return { ...data, totals: computeTotals(data) };
+}
+
 module.exports = {
   getValue,
   upsertValue,
   getPersonNames,
   addExpense,
   addCasalExpense,
-  getMonthlyTotals,
+  getMonthSnapshot,
   monthKey,
 };
