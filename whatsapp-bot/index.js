@@ -24,6 +24,9 @@ function startBridgeServer() {
   const server = http.createServer(async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    // Chrome Private Network Access: sites públicos (https) precisam dessa
+    // permissão explícita pra poder falar com localhost/loopback.
+    res.setHeader('Access-Control-Allow-Private-Network', 'true');
     if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
     if (req.url === '/status') {
@@ -36,12 +39,68 @@ function startBridgeServer() {
       res.end(JSON.stringify({ connected: bridgeState.connected, qr: bridgeState.qrDataUrl }));
       return;
     }
+    if (req.url === '/' || req.url === '/index.html') {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(pairingPageHtml());
+      return;
+    }
     res.writeHead(404);
     res.end();
   });
   server.listen(HTTP_PORT, () => {
     console.log(`Bridge HTTP em http://localhost:${HTTP_PORT} (status/QR pro CasalFin consultar)`);
   });
+}
+
+function pairingPageHtml() {
+  return `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CasalFin · Conectar WhatsApp</title>
+<style>
+  body{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#f7f0f4;color:#1a0012;margin:0;padding:24px 16px;display:flex;flex-direction:column;align-items:center;gap:16px;min-height:100vh;box-sizing:border-box}
+  h1{font-size:1.1rem;color:#880e4f;margin:0}
+  #status{font-weight:700;padding:8px 16px;border-radius:20px;font-size:13px}
+  #status.on{background:#e8f5e9;color:#2e7d32}
+  #status.off{background:#fce4ec;color:#b08090}
+  #qrWrap{background:#fff;padding:16px;border-radius:16px;box-shadow:0 2px 12px rgba(160,40,90,.15)}
+  img{width:260px;max-width:80vw;display:block}
+  p{font-size:12px;color:#7b3a5c;text-align:center;max-width:280px}
+</style>
+</head>
+<body>
+  <h1>💕 CasalFin — Conectar WhatsApp</h1>
+  <div id="status" class="off">Verificando...</div>
+  <div id="qrWrap" style="display:none"><img id="qrImg"></div>
+  <p>WhatsApp → Aparelhos conectados → Conectar um aparelho, e aponte a câmera pro QR acima.</p>
+  <script>
+    async function tick(){
+      try{
+        const r = await fetch('/qr');
+        const d = await r.json();
+        const st = document.getElementById('status');
+        const wrap = document.getElementById('qrWrap');
+        if(d.connected){
+          st.textContent = '✅ Conectado';
+          st.className = 'on';
+          wrap.style.display = 'none';
+        }else{
+          st.textContent = '⚪ Não conectado';
+          st.className = 'off';
+          if(d.qr){
+            document.getElementById('qrImg').src = d.qr;
+            wrap.style.display = '';
+          }
+        }
+      }catch(e){}
+    }
+    tick();
+    setInterval(tick, 3000);
+  </script>
+</body>
+</html>`;
 }
 
 async function startBot() {

@@ -391,7 +391,9 @@ html,body{height:100%;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;
     <div class="f-lbl" style="margin-bottom:8px">📱 Bot de gastos via WhatsApp</div>
     <div><div class="f-lbl">Endereço do bot (rodando no seu PC)</div><input class="f-inp" id="wa-bot-url" type="text" value="http://localhost:8787" oninput="waSaveUrl()"></div>
     <div id="wa-status" style="font-size:12px;color:var(--muted);margin:8px 0">Verificando...</div>
-    <button class="btn-cc" style="width:100%" onclick="waToggleQr()">Ver QR code</button>
+    <button class="btn-cc" style="width:100%;margin-bottom:8px" onclick="waToggleQr()">Ver QR code aqui</button>
+    <button class="btn-cc" style="width:100%" onclick="window.open(waGetUrl(),'_blank')">Abrir página de pareamento</button>
+    <p style="font-size:11px;color:var(--muted);margin-top:6px">Se o navegador bloquear a conexão com o bot local (comum no Chrome), use o botão "Abrir página de pareamento" — ele funciona sempre.</p>
     <div id="wa-qr-wrap" style="display:none;text-align:center;margin-top:12px">
       <img id="wa-qr-img" style="max-width:220px;width:100%;border-radius:8px;border:1px solid var(--bdr)">
       <p style="font-size:11px;color:var(--muted);margin-top:6px">WhatsApp → Aparelhos conectados → Conectar um aparelho</p>
