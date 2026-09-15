@@ -388,6 +388,16 @@ html,body{height:100%;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;
     <div><div class="f-lbl">Nome — Pessoa 2</div><input class="f-inp" id="cfg-p2" type="text" value="Linda" oninput="saveMeta();renderAll()"></div>
   </div>
   <div style="margin-top:28px;padding-top:16px;border-top:1px solid var(--bdr)">
+    <div class="f-lbl" style="margin-bottom:8px">📱 Bot de gastos via WhatsApp</div>
+    <div><div class="f-lbl">Endereço do bot (rodando no seu PC)</div><input class="f-inp" id="wa-bot-url" type="text" value="http://localhost:8787" oninput="waSaveUrl()"></div>
+    <div id="wa-status" style="font-size:12px;color:var(--muted);margin:8px 0">Verificando...</div>
+    <button class="btn-cc" style="width:100%" onclick="waToggleQr()">Ver QR code</button>
+    <div id="wa-qr-wrap" style="display:none;text-align:center;margin-top:12px">
+      <img id="wa-qr-img" style="max-width:220px;width:100%;border-radius:8px;border:1px solid var(--bdr)">
+      <p style="font-size:11px;color:var(--muted);margin-top:6px">WhatsApp → Aparelhos conectados → Conectar um aparelho</p>
+    </div>
+  </div>
+  <div style="margin-top:28px;padding-top:16px;border-top:1px solid var(--bdr)">
     <p style="font-size:12px;color:var(--muted);margin-bottom:12px">Dados salvos no browser por mês. Metas ficam salvas permanentemente.</p>
     <button class="btn-cc" style="width:100%;margin-bottom:8px;color:var(--err)" onclick="if(confirm('Apagar dados do mês?')){clearMonth()}">Apagar mês atual</button>
     <button class="btn-cc" style="width:100%;color:var(--err)" onclick="if(confirm('Apagar todas as metas?')){clearGoals()}">Apagar todas as metas</button>
@@ -1007,8 +1017,54 @@ function saveSheet(){
 }
 function openSheet(){document.getElementById('overlay').classList.add('open');document.getElementById('sheet').classList.add('open');}
 function closeSheet(){document.getElementById('overlay').classList.remove('open');document.getElementById('sheet').classList.remove('open');}
-function openSettings(){document.getElementById('settingsPanel').classList.add('open');}
-function closeSettings(){document.getElementById('settingsPanel').classList.remove('open');}
+function openSettings(){
+  document.getElementById('settingsPanel').classList.add('open');
+  const saved=localStorage.getItem('cf_wa_bot_url');
+  if(saved)document.getElementById('wa-bot-url').value=saved;
+  waCheckStatus();
+  if(_waPollTimer)clearInterval(_waPollTimer);
+  _waPollTimer=setInterval(()=>{
+    waCheckStatus();
+    if(document.getElementById('wa-qr-wrap').style.display!=='none')waRefreshQr();
+  },3000);
+}
+function closeSettings(){
+  document.getElementById('settingsPanel').classList.remove('open');
+  if(_waPollTimer){clearInterval(_waPollTimer);_waPollTimer=null;}
+}
+
+// ═══ WHATSAPP BOT (bridge local) ═══
+let _waPollTimer=null;
+function waGetUrl(){return localStorage.getItem('cf_wa_bot_url')||document.getElementById('wa-bot-url')?.value||'http://localhost:8787';}
+function waSaveUrl(){localStorage.setItem('cf_wa_bot_url',document.getElementById('wa-bot-url').value);waCheckStatus();}
+async function waCheckStatus(){
+  const el=document.getElementById('wa-status');
+  if(!el)return;
+  try{
+    const r=await fetch(waGetUrl()+'/status');
+    const d=await r.json();
+    el.textContent=d.connected?'✅ Conectado':'⚪ Não conectado';
+    el.style.color=d.connected?'var(--ok)':'var(--muted)';
+    if(d.connected)document.getElementById('wa-qr-wrap').style.display='none';
+  }catch(e){
+    el.textContent='⚠️ Bot não encontrado (ele está rodando no seu PC?)';
+    el.style.color='var(--err)';
+  }
+}
+function waToggleQr(){
+  const wrap=document.getElementById('wa-qr-wrap');
+  const show=wrap.style.display==='none';
+  wrap.style.display=show?'':'none';
+  if(show)waRefreshQr();
+}
+async function waRefreshQr(){
+  try{
+    const r=await fetch(waGetUrl()+'/qr');
+    const d=await r.json();
+    if(d.connected)document.getElementById('wa-qr-wrap').style.display='none';
+    else if(d.qr)document.getElementById('wa-qr-img').src=d.qr;
+  }catch(e){}
+}
 function clearMonth(){['fixos','parc','p0','p1','entradas','saidas','invest','budgetF','budgetV'].forEach(k=>{const key='cf_'+mk()+'_'+k;localStorage.removeItem(key);syncPush(key,null);});initState();renderAll();closeSettings();}
 function clearGoals(){S.goals=[];saveAll();renderMetas();closeSettings();}
 
