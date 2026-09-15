@@ -52,6 +52,22 @@ async function addCasalExpense(entry) {
   return key;
 }
 
+// Remove o ÚLTIMO lançamento que casa com os campos informados. Devolve o
+// que foi removido, ou null se nada casou.
+async function removeExpense(quem, { nome, valor, cat }) {
+  const key = quem === 'casal' ? `cf_${monthKey()}_fixos` : `cf_${monthKey()}_p${quem}`;
+  const lista = (await getValue(key)) || [];
+  const alvo = String(valor).replace(',', '.');
+  const idx = lista.map((r, i) => ({ r, i })).reverse().find(({ r }) =>
+    String(r.valor).replace(',', '.') === alvo
+    && (nome === undefined || r.nome === nome)
+    && (cat === undefined || r.cat === cat));
+  if (!idx) return null;
+  const [removido] = lista.splice(idx.i, 1);
+  await upsertValue(key, lista);
+  return removido;
+}
+
 const pv = v => parseFloat(String(v || '').replace(',', '.')) || 0;
 const sumBy = (arr, pred) => (arr || []).filter(pred).reduce((s, r) => s + pv(r.valor), 0);
 
@@ -97,6 +113,7 @@ module.exports = {
   getPersonNames,
   addExpense,
   addCasalExpense,
+  removeExpense,
   getMonthSnapshot,
   monthKey,
 };

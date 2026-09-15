@@ -14,8 +14,33 @@ const { getPersonNames } = require('./supabase');
 const { think } = require('./brain');
 
 const OWNER_PERSON_INDEX = Number(process.env.OWNER_PERSON_INDEX ?? 0);
+const PARTNER_PERSON_INDEX = OWNER_PERSON_INDEX === 0 ? 1 : 0;
+const GROUP_NAME = (process.env.CASALFIN_GROUP_NAME || 'casalfin').toLowerCase();
 const HTTP_PORT = Number(process.env.WHATSAPP_BOT_PORT ?? 8787);
 const logger = pino({ level: 'silent' });
+
+// Ids das mensagens que o próprio bot enviou — sem isso ele responderia a si
+// mesmo no grupo, em loop (e cada volta é uma chamada paga de API).
+const sentIds = new Set();
+function rememberSent(id) {
+  if (!id) return;
+  sentIds.add(id);
+  if (sentIds.size > 200) sentIds.delete(sentIds.values().next().value);
+}
+
+const groupSubjects = new Map();
+async function isCasalFinGroup(sock, jid) {
+  if (!jid.endsWith('@g.us')) return false;
+  if (!groupSubjects.has(jid)) {
+    try {
+      const meta = await sock.groupMetadata(jid);
+      groupSubjects.set(jid, (meta.subject || '').toLowerCase());
+    } catch {
+      groupSubjects.set(jid, '');
+    }
+  }
+  return groupSubjects.get(jid).includes(GROUP_NAME);
+}
 
 // Estado exposto pro app CasalFin conferir status/QR pela própria interface.
 const bridgeState = { connected: false, qrDataUrl: null };
@@ -141,7 +166,8 @@ async function startBot() {
     if (type !== 'notify') return;
     for (const msg of messages) {
       try {
-        if (!msg.message || !msg.key.fromMe) continue;
+        if (!msg.message || sentIds.has(msg.key.id)) continue;
+
         // O chat "Mensagens para você mesmo" pode aparecer com o JID do
         // número de telefone (@s.whatsapp.net) ou com o LID (@lid) — o
         // WhatsApp usa os dois formatos dependendo da versão/conta.
@@ -149,12 +175,27 @@ async function startBot() {
           .filter(Boolean)
           .map(jidNormalizedUser);
         const fromJid = jidNormalizedUser(msg.key.remoteJid);
-        if (!selfJids.includes(fromJid)) continue;
+
+        let speaker;
+        let replyJid;
+        if (msg.key.fromMe && selfJids.includes(fromJid)) {
+          speaker = OWNER_PERSON_INDEX;
+          // Responder no @lid faz a mensagem cair numa thread separada da que
+          // a pessoa tem aberta; o JID do telefone é o que ela enxerga.
+          replyJid = jidNormalizedUser(sock.user.id);
+        } else if (await isCasalFinGroup(sock, msg.key.remoteJid)) {
+          // Grupo de duas pessoas: quem enviou é o dono da conta ou o parceiro.
+          speaker = msg.key.fromMe ? OWNER_PERSON_INDEX : PARTNER_PERSON_INDEX;
+          replyJid = msg.key.remoteJid;
+        } else {
+          continue;
+        }
 
         const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
         if (!text.trim()) continue;
 
-        await handleExpenseMessage(sock, msg.key.remoteJid, text);
+        console.log(`[recebido de ${msg.key.remoteJid} | pessoa ${speaker}] ${text}`);
+        await handleExpenseMessage(sock, replyJid, text, speaker);
       } catch (err) {
         console.error('Erro ao processar mensagem:', err);
       }
@@ -162,16 +203,21 @@ async function startBot() {
   });
 }
 
-async function handleExpenseMessage(sock, jid, text) {
+async function handleExpenseMessage(sock, jid, text, speakerIndex) {
   const personNames = await getPersonNames();
+  let reply;
   try {
-    const reply = await think(text, personNames, OWNER_PERSON_INDEX);
-    await sock.sendMessage(jid, { text: reply });
+    reply = await think(text, personNames, speakerIndex);
   } catch (err) {
-    console.error('Erro no brain:', err);
-    await sock.sendMessage(jid, {
-      text: '⚠️ Deu erro aqui do meu lado processando sua mensagem. Tenta de novo?',
-    });
+    console.error('Erro no brain:', err.status || '', err.message);
+    reply = '⚠️ Deu erro aqui do meu lado processando sua mensagem. Tenta de novo?';
+  }
+  try {
+    const sent = await sock.sendMessage(jid, { text: reply });
+    rememberSent(sent?.key?.id);
+    console.log(`[respondido para ${jid}] id=${sent?.key?.id} ${reply.slice(0, 60)}`);
+  } catch (err) {
+    console.error('Erro ao enviar resposta:', err.message);
   }
 }
 

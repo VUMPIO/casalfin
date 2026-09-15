@@ -2,7 +2,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { betaTool } = require('@anthropic-ai/sdk/helpers/beta/json-schema');
 
 const { CATS, TIPOS } = require('./config');
-const { getMonthSnapshot, addExpense, addCasalExpense, monthKey } = require('./supabase');
+const { getMonthSnapshot, addExpense, addCasalExpense, removeExpense, monthKey } = require('./supabase');
 const { fmtBRL } = require('./format');
 
 const MODEL = 'claude-opus-5';
@@ -55,6 +55,7 @@ ${TIPOS.map(t => t.v).join(', ')}
 
 ## O que fazer com a mensagem
 1. Se a pessoa está relatando um GASTO (ex: "ifood 45,90 nubank", "gastei 200 no mercado"), chame a ferramenta registrar_gasto. Deduza a categoria, a forma de pagamento e de quem é o gasto. Se a mensagem indicar que é um gasto compartilhado do casal ("casal", "nós dois", "juntos", "dividido"), use quem="casal". Se não ficar claro de quem é, assuma que é de quem está falando.
+1b. Se a pessoa pedir para APAGAR, remover ou desfazer um lançamento, chame remover_gasto. Identifique nos dados acima qual lançamento ela quer ("o último", "o do mercado", "aqueles 50 do uber") e passe os campos exatos. Se houver ambiguidade real sobre qual apagar, pergunte antes.
 2. Se é uma PERGUNTA sobre as finanças (quanto gastei, quem gastou mais, no que gastei mais, quanto sobrou, etc.), responda usando os dados acima. Faça as contas que precisar.
 3. Se a pessoa pedir várias coisas, atenda todas.
 4. Se você realmente não entender, pergunte de forma curta o que ela quis dizer.
@@ -118,17 +119,55 @@ function makeRegistrarGastoTool(personNames, ownerIndex) {
   });
 }
 
+function makeRemoverGastoTool(personNames) {
+  return betaTool({
+    name: 'remover_gasto',
+    description: 'Remove um gasto já registrado. Use quando a pessoa pedir para apagar, remover ou desfazer um lançamento. Os dados do mês estão no system prompt — identifique ali qual lançamento ela quer apagar e passe os campos exatos dele.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        quem: {
+          type: 'string',
+          enum: ['0', '1', 'casal'],
+          description: `De qual lista remover: "0" = ${personNames[0]}, "1" = ${personNames[1]}, "casal" = despesas fixas compartilhadas.`,
+        },
+        valor: {
+          type: 'number',
+          description: 'Valor exato do lançamento a remover, como aparece nos dados.',
+        },
+        nome: {
+          type: 'string',
+          description: 'Nome exato do lançamento, como aparece nos dados.',
+        },
+      },
+      required: ['quem', 'valor'],
+      additionalProperties: false,
+    },
+    run: async (input) => {
+      const removido = await removeExpense(
+        input.quem === 'casal' ? 'casal' : Number(input.quem),
+        { valor: input.valor, nome: input.nome },
+      );
+      if (!removido) return 'Nenhum lançamento com esses dados foi encontrado — nada foi removido.';
+      return `Removido: ${removido.nome}, ${fmtBRL(removido.valor)}.`;
+    },
+  });
+}
+
 async function think(messageText, personNames, ownerIndex) {
   const snapshot = await getMonthSnapshot();
   const system = buildSystemPrompt(snapshot, personNames, ownerIndex);
-  const tool = makeRegistrarGastoTool(personNames, ownerIndex);
+  const tools = [
+    makeRegistrarGastoTool(personNames, ownerIndex),
+    makeRemoverGastoTool(personNames),
+  ];
 
   const runner = client.beta.messages.toolRunner({
     model: MODEL,
     max_tokens: 8000,
     output_config: { effort: 'low' },
     system,
-    tools: [tool],
+    tools,
     messages: [{ role: 'user', content: messageText }],
   });
 
