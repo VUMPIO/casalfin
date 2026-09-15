@@ -6,6 +6,11 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#c2185b">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CasalFin">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <title>CasalFin 💕</title>
 <style>
 :root{
@@ -221,6 +226,9 @@ html,body{height:100%;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;
     <span class="month-label" id="monthLabel">JANEIRO 2026</span>
     <button onclick="changeMonth(1)">›</button>
   </div>
+  <button class="hdr-btn" id="hdrInstallBtn" onclick="pwaInstall()" title="Instalar app" hidden>
+    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+  </button>
   <button class="hdr-btn" onclick="openSettings()">
     <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
   </button>
@@ -386,6 +394,14 @@ html,body{height:100%;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;
   <div style="display:flex;flex-direction:column;gap:14px">
     <div><div class="f-lbl">Nome — Pessoa 1</div><input class="f-inp" id="cfg-p1" type="text" value="Vitinho" oninput="saveMeta();renderAll()"></div>
     <div><div class="f-lbl">Nome — Pessoa 2</div><input class="f-inp" id="cfg-p2" type="text" value="Linda" oninput="saveMeta();renderAll()"></div>
+  </div>
+  <div style="margin-top:28px;padding-top:16px;border-top:1px solid var(--bdr)">
+    <div class="f-lbl" style="margin-bottom:8px">⬇️ Instalar o CasalFin</div>
+    <div id="pwa-box">
+      <p id="pwa-desc" style="font-size:12px;color:var(--muted);margin-bottom:10px">Instale para abrir o CasalFin como um aplicativo, com ícone próprio e sem a barra do navegador.</p>
+      <button class="btn-cc" id="pwa-install-btn" style="width:100%;display:none" onclick="pwaInstall()">Instalar agora</button>
+      <div id="pwa-manual" style="display:none;font-size:12px;color:var(--txt2);line-height:1.6"></div>
+    </div>
   </div>
   <div style="margin-top:28px;padding-top:16px;border-top:1px solid var(--bdr)">
     <div class="f-lbl" style="margin-bottom:8px">📱 Bot de gastos via WhatsApp</div>
@@ -1021,6 +1037,7 @@ function openSheet(){document.getElementById('overlay').classList.add('open');do
 function closeSheet(){document.getElementById('overlay').classList.remove('open');document.getElementById('sheet').classList.remove('open');}
 function openSettings(){
   document.getElementById('settingsPanel').classList.add('open');
+  pwaRefreshUI();
   const saved=localStorage.getItem('cf_wa_bot_url');
   if(saved)document.getElementById('wa-bot-url').value=saved;
   waCheckStatus();
@@ -1094,6 +1111,72 @@ function renderAll(){
   renderGastos();renderContas();renderDashboard();
   if(curPage==='orcamento')renderBudget();
   if(curPage==='metas')renderMetas();
+}
+
+// ═══ INSTALAÇÃO (PWA) ═══
+let _pwaPrompt=null;
+
+function pwaInstalled(){
+  return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone===true;
+}
+function pwaManualHelp(){
+  const ua=navigator.userAgent;
+  const isIOS=/iPad|iPhone|iPod/.test(ua)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  if(isIOS)return 'No iPhone/iPad: toque em <b>Compartilhar</b> (o quadrado com a seta pra cima) e escolha <b>Adicionar à Tela de Início</b>.';
+  if(/Firefox/.test(ua))return 'O Firefox não instala aplicativos web. Abra esta página no <b>Chrome</b>, <b>Edge</b> ou <b>Safari</b> para instalar.';
+  if(/Safari/.test(ua)&&!/Chrome|Chromium|Edg/.test(ua))return 'No Safari do Mac: menu <b>Arquivo</b> → <b>Adicionar ao Dock</b>.';
+  return 'No menu do navegador (⋮ ou ⋯), procure por <b>Instalar</b> ou <b>Adicionar à tela inicial</b>.';
+}
+function pwaRefreshUI(){
+  const btn=document.getElementById('pwa-install-btn');
+  const manual=document.getElementById('pwa-manual');
+  const desc=document.getElementById('pwa-desc');
+  const hdrBtn=document.getElementById('hdrInstallBtn');
+  if(!btn||!manual||!desc)return;
+
+  if(pwaInstalled()){
+    desc.textContent='✅ O CasalFin já está instalado neste dispositivo.';
+    btn.style.display='none';
+    manual.style.display='none';
+    if(hdrBtn)hdrBtn.hidden=true;
+    return;
+  }
+  desc.textContent='Instale para abrir o CasalFin como um aplicativo, com ícone próprio e sem a barra do navegador.';
+  if(_pwaPrompt){
+    btn.style.display='';
+    manual.style.display='none';
+    if(hdrBtn)hdrBtn.hidden=false;
+  }else{
+    btn.style.display='none';
+    manual.innerHTML=pwaManualHelp();
+    manual.style.display='';
+    if(hdrBtn)hdrBtn.hidden=true;
+  }
+}
+async function pwaInstall(){
+  if(!_pwaPrompt)return;
+  _pwaPrompt.prompt();
+  const {outcome}=await _pwaPrompt.userChoice;
+  // O prompt só pode ser usado uma vez; o navegador reemite o evento se couber.
+  _pwaPrompt=null;
+  if(outcome==='accepted'){
+    const desc=document.getElementById('pwa-desc');
+    if(desc)desc.textContent='✅ Instalado! Procure o ícone do CasalFin no seu dispositivo.';
+  }
+  pwaRefreshUI();
+}
+
+window.addEventListener('beforeinstallprompt',e=>{
+  e.preventDefault();
+  _pwaPrompt=e;
+  pwaRefreshUI();
+});
+window.addEventListener('appinstalled',()=>{_pwaPrompt=null;pwaRefreshUI();});
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>{
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  });
 }
 
 // ═══ BOOT ═══
