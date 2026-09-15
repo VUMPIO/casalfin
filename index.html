@@ -394,6 +394,7 @@ html,body{height:100%;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script>
 // ═══ CONSTANTS ═══
 const MONTHS=['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
@@ -435,12 +436,51 @@ let activePerson=0, contasPerson=0, dashPerson=2, budgetType='fixed', curPage='i
 let _selCat='ifood', _selEmoji='✈️', _selColor=GOAL_COLORS[0], _selQuem=0, _selResp=2;
 
 const mk=()=>`${curYear}-${String(curMonth+1).padStart(2,'0')}`;
+
+// ═══ SYNC (Supabase — compartilha dados entre PC e celular, contas diferentes) ═══
+const SUPABASE_URL='https://uusrlvnqvvoisbwaetih.supabase.co';
+const SUPABASE_ANON_KEY='sb_publishable_DuaaMlcB4PNarjbEQykZWw_45CR6wdU';
+let _sb=null, _dbFirstSyncResolve=null;
+const _dbFirstSync=new Promise(res=>{_dbFirstSyncResolve=res;});
+
+async function initDb(){
+  try{
+    if(!window.supabase||SUPABASE_URL.startsWith('REPLACE_ME')){_dbFirstSyncResolve();return;}
+    _sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY);
+    const{data,error}=await _sb.from('casalfin_state').select('key,value');
+    if(!error&&data){
+      data.forEach(row=>{
+        const v=JSON.stringify(row.value);
+        if(localStorage.getItem(row.key)!==v)localStorage.setItem(row.key,v);
+      });
+    }
+    _sb.channel('casalfin_state_changes')
+      .on('postgres_changes',{event:'*',schema:'public',table:'casalfin_state'},payload=>{
+        const key=(payload.new&&payload.new.key)||(payload.old&&payload.old.key);
+        if(!key)return;
+        if(payload.eventType==='DELETE'){
+          if(localStorage.getItem(key)!==null){localStorage.removeItem(key);initState();renderAll();}
+        }else{
+          const v=JSON.stringify(payload.new.value);
+          if(localStorage.getItem(key)!==v){localStorage.setItem(key,v);initState();renderAll();}
+        }
+      })
+      .subscribe();
+  }catch(e){_sb=null;}
+  _dbFirstSyncResolve();
+}
+function syncPush(key,value){
+  if(!_sb)return;
+  if(value===null)_sb.from('casalfin_state').delete().eq('key',key).then(()=>{});
+  else _sb.from('casalfin_state').upsert({key,value,updated_at:new Date().toISOString()}).then(()=>{});
+}
+
 const ld=k=>{try{return JSON.parse(localStorage.getItem(`cf_${mk()}_${k}`))}catch{return null}};
-const sv=(k,d)=>localStorage.setItem(`cf_${mk()}_${k}`,JSON.stringify(d));
+const sv=(k,d)=>{const key=`cf_${mk()}_${k}`;localStorage.setItem(key,JSON.stringify(d));syncPush(key,d);};
 const ldG=k=>{try{return JSON.parse(localStorage.getItem(`cf_g_${k}`))}catch{return null}};
-const svG=(k,d)=>localStorage.setItem(`cf_g_${k}`,JSON.stringify(d));
+const svG=(k,d)=>{const key=`cf_g_${k}`;localStorage.setItem(key,JSON.stringify(d));syncPush(key,d);};
 const ldM=k=>{try{const r=localStorage.getItem(`cf_m_${k}`);return r!==null?JSON.parse(r):null}catch{return null}};
-const svM=(k,v)=>localStorage.setItem(`cf_m_${k}`,JSON.stringify(v));
+const svM=(k,v)=>{const key=`cf_m_${k}`;localStorage.setItem(key,JSON.stringify(v));syncPush(key,v);};
 
 let S={};
 
@@ -969,7 +1009,7 @@ function openSheet(){document.getElementById('overlay').classList.add('open');do
 function closeSheet(){document.getElementById('overlay').classList.remove('open');document.getElementById('sheet').classList.remove('open');}
 function openSettings(){document.getElementById('settingsPanel').classList.add('open');}
 function closeSettings(){document.getElementById('settingsPanel').classList.remove('open');}
-function clearMonth(){['fixos','parc','p0','p1','entradas','saidas','invest','budgetF','budgetV'].forEach(k=>localStorage.removeItem('cf_'+mk()+'_'+k));initState();renderAll();closeSettings();}
+function clearMonth(){['fixos','parc','p0','p1','entradas','saidas','invest','budgetF','budgetV'].forEach(k=>{const key='cf_'+mk()+'_'+k;localStorage.removeItem(key);syncPush(key,null);});initState();renderAll();closeSettings();}
 function clearGoals(){S.goals=[];saveAll();renderMetas();closeSettings();}
 
 // ═══ HELPERS ═══
@@ -999,7 +1039,9 @@ function renderAll(){
 }
 
 // ═══ BOOT ═══
-(function(){
+(async function(){
+  initDb();
+  await Promise.race([_dbFirstSync,new Promise(r=>setTimeout(r,3000))]);
   const n1=ldM('p1'),n2=ldM('p2');
   if(n1)document.getElementById('cfg-p1').value=n1;
   if(n2)document.getElementById('cfg-p2').value=n2;
