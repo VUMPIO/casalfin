@@ -42,4 +42,48 @@ async function addExpense(personIndex, entry) {
   return key;
 }
 
-module.exports = { getValue, upsertValue, getPersonNames, addExpense, monthKey };
+// Gasto de casal: entra na lista de "Fixos" com resp=2, igual ao app faz
+// quando você adiciona um gasto pela aba "Casal".
+async function addCasalExpense(entry) {
+  const key = `cf_${monthKey()}_fixos`;
+  const current = (await getValue(key)) || [];
+  current.push({ ...entry, pago: true, resp: 2 });
+  await upsertValue(key, current);
+  return key;
+}
+
+const pv = v => parseFloat(String(v || '').replace(',', '.')) || 0;
+const sumBy = (arr, pred) => (arr || []).filter(pred).reduce((s, r) => s + pv(r.valor), 0);
+
+// Espelha exatamente a fórmula usada no dashboard do app (renderDashboard):
+// gasto de uma pessoa = variáveis dela + fixos pagos atribuídos a ela + parcelas dela.
+// Gasto "casal" (resp=2) fica de fora do total individual, igual no app.
+async function getMonthlyTotals() {
+  const mk = monthKey();
+  const [p0, p1, fixos, parc] = await Promise.all([
+    getValue(`cf_${mk}_p0`),
+    getValue(`cf_${mk}_p1`),
+    getValue(`cf_${mk}_fixos`),
+    getValue(`cf_${mk}_parc`),
+  ]);
+  const totalFor = idx =>
+    sumBy(idx === 0 ? p0 : p1, () => true) +
+    sumBy(fixos, r => (r.resp ?? 2) === idx && r.pago) +
+    sumBy(parc, r => (r.resp ?? 2) === idx);
+  const couple =
+    sumBy(fixos, r => (r.resp ?? 2) === 2 && r.pago) +
+    sumBy(parc, r => (r.resp ?? 2) === 2);
+  const p0Total = totalFor(0);
+  const p1Total = totalFor(1);
+  return { p0: p0Total, p1: p1Total, couple, grandTotal: p0Total + p1Total + couple };
+}
+
+module.exports = {
+  getValue,
+  upsertValue,
+  getPersonNames,
+  addExpense,
+  addCasalExpense,
+  getMonthlyTotals,
+  monthKey,
+};

@@ -10,8 +10,9 @@ const {
   jidNormalizedUser,
 } = require('@whiskeysockets/baileys');
 
-const { parseExpense } = require('./parser');
-const { getPersonNames, addExpense } = require('./supabase');
+const { parseExpense, detectIntent } = require('./parser');
+const { getPersonNames, addExpense, addCasalExpense, getMonthlyTotals } = require('./supabase');
+const { fmtBRL } = require('./format');
 
 const OWNER_PERSON_INDEX = Number(process.env.OWNER_PERSON_INDEX ?? 0);
 const HTTP_PORT = Number(process.env.WHATSAPP_BOT_PORT ?? 8787);
@@ -142,9 +143,14 @@ async function startBot() {
     for (const msg of messages) {
       try {
         if (!msg.message || !msg.key.fromMe) continue;
-        const selfJid = jidNormalizedUser(sock.user.id);
+        // O chat "Mensagens para você mesmo" pode aparecer com o JID do
+        // número de telefone (@s.whatsapp.net) ou com o LID (@lid) — o
+        // WhatsApp usa os dois formatos dependendo da versão/conta.
+        const selfJids = [sock.user.id, sock.user.lid]
+          .filter(Boolean)
+          .map(jidNormalizedUser);
         const fromJid = jidNormalizedUser(msg.key.remoteJid);
-        if (fromJid !== selfJid) continue;
+        if (!selfJids.includes(fromJid)) continue;
 
         const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
         if (!text.trim()) continue;
@@ -159,6 +165,13 @@ async function startBot() {
 
 async function handleExpenseMessage(sock, jid, text) {
   const personNames = await getPersonNames();
+
+  const intent = detectIntent(text, personNames);
+  if (intent) {
+    await sock.sendMessage(jid, { text: await answerIntent(intent, personNames) });
+    return;
+  }
+
   const parsed = parseExpense(text, personNames, OWNER_PERSON_INDEX);
 
   if (!parsed.ok) {
@@ -176,12 +189,37 @@ async function handleExpenseMessage(sock, jid, text) {
     valor: parsed.valor,
   };
 
-  await addExpense(parsed.quem, entry);
+  const quemLabel = parsed.quem === 'casal' ? 'Casal' : personNames[parsed.quem];
+  if (parsed.quem === 'casal') await addCasalExpense(entry);
+  else await addExpense(parsed.quem, entry);
 
-  const quemNome = personNames[parsed.quem];
   await sock.sendMessage(jid, {
-    text: `✅ ${parsed.catLabel} · R$ ${parsed.valor} ${parsed.tipo ? '· ' + parsed.tipo + ' ' : ''}· ${quemNome}\n"${parsed.nome}" registrado no CasalFin.`,
+    text: `✅ ${parsed.catLabel} · R$ ${parsed.valor} ${parsed.tipo ? '· ' + parsed.tipo + ' ' : ''}· ${quemLabel}\n"${parsed.nome}" registrado no CasalFin.`,
   });
+}
+
+async function answerIntent(intent, personNames) {
+  const totals = await getMonthlyTotals();
+
+  if (intent.type === 'total_self') {
+    const v = totals[`p${OWNER_PERSON_INDEX}`];
+    return `💰 Você já gastou ${fmtBRL(v)} esse mês.`;
+  }
+  if (intent.type === 'total_person') {
+    const v = totals[`p${intent.person}`];
+    return `💰 ${personNames[intent.person]} já gastou ${fmtBRL(v)} esse mês.`;
+  }
+  if (intent.type === 'total_couple') {
+    return `💰 Vocês gastaram ${fmtBRL(totals.grandTotal)} esse mês (${personNames[0]}: ${fmtBRL(totals.p0)}, ${personNames[1]}: ${fmtBRL(totals.p1)}, Casal: ${fmtBRL(totals.couple)}).`;
+  }
+  if (intent.type === 'compare') {
+    if (totals.p0 === totals.p1) return `⚖️ ${personNames[0]} e ${personNames[1]} gastaram exatamente o mesmo esse mês: ${fmtBRL(totals.p0)}.`;
+    const winner = totals.p0 > totals.p1 ? 0 : 1;
+    const loser = winner === 0 ? 1 : 0;
+    const diff = Math.abs(totals.p0 - totals.p1);
+    return `🏆 ${personNames[winner]} gastou mais esse mês: ${fmtBRL(totals[`p${winner}`])} contra ${fmtBRL(totals[`p${loser}`])} de ${personNames[loser]} (diferença de ${fmtBRL(diff)}).`;
+  }
+  return '🤔 Não entendi a pergunta.';
 }
 
 startBridgeServer();

@@ -24,7 +24,10 @@ function findValor(text) {
   return picked.raw.replace(',', '.');
 }
 
+const CASAL_KW = ['casal', 'nos dois', 'juntos', 'dividido', 'nós', 'compartilhado'];
+
 // personNames: [nomePessoa0, nomePessoa1] — índice 0 = S.p0, índice 1 = S.p1
+// quem retornado: 0, 1, ou 'casal' (gasto compartilhado, vira um "Fixo" com resp=2)
 function parseExpense(rawText, personNames, ownerIndex) {
   const text = norm(rawText);
 
@@ -38,10 +41,13 @@ function parseExpense(rawText, personNames, ownerIndex) {
   const tipoMatch = findKeyword(text, TIPOS, 'kw');
   const tipo = tipoMatch ? tipoMatch.entry.v : '';
 
+  const casalKw = CASAL_KW.find(kw => text.includes(norm(kw)));
+
   let quem = ownerIndex;
   const p0n = norm(personNames[0] || '');
   const p1n = norm(personNames[1] || '');
-  if (p1n && text.includes(p1n)) quem = 1;
+  if (casalKw) quem = 'casal';
+  else if (p1n && text.includes(p1n)) quem = 1;
   else if (p0n && text.includes(p0n)) quem = 0;
 
   const STOPWORDS = new Set(['pra', 'para', 'de', 'do', 'da', 'no', 'na', 'em', 'com', 'o', 'a', 'e']);
@@ -52,6 +58,7 @@ function parseExpense(rawText, personNames, ownerIndex) {
 
   let nome = rawText;
   nome = nome.replace(new RegExp(valor.replace('.', '[.,]'), 'i'), ' ');
+  if (casalKw) nome = nome.replace(new RegExp(casalKw, 'i'), ' ');
   if (p0n && quem === 0) nome = nome.replace(new RegExp(personNames[0], 'i'), ' ');
   if (p1n && quem === 1) nome = nome.replace(new RegExp(personNames[1], 'i'), ' ');
   nome = nome
@@ -73,4 +80,29 @@ function parseExpense(rawText, personNames, ownerIndex) {
   };
 }
 
-module.exports = { parseExpense, findValor, norm };
+// Reconhece perguntas ("quanto eu gastei", "quem gastou mais") antes de
+// tentar interpretar a mensagem como um novo gasto.
+function detectIntent(rawText, personNames) {
+  const t = norm(rawText);
+  const p0n = norm(personNames[0] || '');
+  const p1n = norm(personNames[1] || '');
+
+  if (/quem\s+(gast(ou|a|ei)?)/.test(t) && /mais/.test(t)) {
+    return { type: 'compare' };
+  }
+  if (/gastamos|total do casal|gasto do casal|nos dois gastamos/.test(t)) {
+    return { type: 'total_couple' };
+  }
+  if (p1n && t.includes(p1n) && /quanto|gast/.test(t)) {
+    return { type: 'total_person', person: 1 };
+  }
+  if (p0n && t.includes(p0n) && /quanto|gast/.test(t)) {
+    return { type: 'total_person', person: 0 };
+  }
+  if (/quanto (eu )?gastei|meu total|quanto eu ja gastei/.test(t)) {
+    return { type: 'total_self' };
+  }
+  return null;
+}
+
+module.exports = { parseExpense, detectIntent, findValor, norm };
